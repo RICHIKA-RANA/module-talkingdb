@@ -74,6 +74,12 @@ class JobStatusResponse(BaseModel):
     file_size: Optional[int] = Field(
     None, description="Original uploaded file Size"
     )
+    page_count: Optional[int] = Field(
+        None,
+        description=(
+            "Document page count. Null until COMPLETED or if pagination is unavailable."
+        ),
+    )
     result_summary: Optional[Dict[str, Any]] = Field(
         None,
         description="Terminal-only summary (elements/tables/duration_ms)",

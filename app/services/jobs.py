@@ -172,6 +172,7 @@ def run_job(
             graph_id=graph_id,
             temp_path=temp_path,
             result_summary=result_summary,
+            page_count=_page_count(document),
             status_message="Document indexed",
         )
 
@@ -243,6 +244,15 @@ def _build_result_summary(document: DocumentModel, ctx: JobContext) -> dict:
     }
 
 
+def _page_count(document: DocumentModel) -> Optional[int]:
+    pages = [
+        element.page
+        for element in document.iter_elements()
+        if getattr(element, "page", None)
+    ]
+    return max(pages) if pages else None
+
+
 # ------------------------------------------------------------- classification
 def _classify(exc: BaseException) -> Tuple[JobErrorCode, str]:
     """Map an exception to a job error code and message."""
@@ -269,6 +279,7 @@ def _finalize(
     graph_id: Optional[str],
     temp_path: Optional[str],
     result_summary: Optional[dict] = None,
+    page_count: Optional[int] = None,
     error_code: Optional[JobErrorCode] = None,
     error_message: Optional[str] = None,
     status_message: Optional[str] = None,
@@ -281,6 +292,7 @@ def _finalize(
             terminal_state,
             result_graph_id=graph_id if terminal_state == JobState.COMPLETED else None,
             result_summary=result_summary,
+            page_count=page_count,
             error_code=error_code,
             error_message=error_message,
             status_message=status_message,
