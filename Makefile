@@ -80,7 +80,7 @@ test:
 
 install-dev:
 	@echo "📦 Installing development dependencies..."
-	poetry install --with dev --no-interaction --no-ansi
+	poetry install --with dev --no-root --no-interaction --no-ansi
 	@echo "✅ Development dependencies installed!"
 
 
