@@ -47,3 +47,6 @@ logs
 
 # Database
 graphs.db*
+
+# Coverage
+coverage.xml
