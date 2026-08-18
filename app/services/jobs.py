@@ -6,7 +6,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from starlette.datastructures import UploadFile
 
@@ -28,6 +28,7 @@ from talkingdb.models.job.stage import JobStage
 from talkingdb.models.job.state import JobState
 from talkingdb.models.metadata.metadata import Metadata
 from talkingdb_ce.client import CEClient
+from talkingdb_ce.services.reader.killable_subprocess import ReadCancelled
 from talkingdb.helpers import file_store
 
 from app.core import config
@@ -116,7 +117,12 @@ def run_job(
 
     try:
         ctx.set_stage(JobStage.PARSING, status_message="Parsing document")
-        parse_result = _parse(temp_path, filename, metadata_json)
+        try:
+            parse_result = _parse(
+                temp_path, filename, metadata_json, cancel_check=ctx.is_cancelled
+            )
+        except ReadCancelled:
+            raise JobCancelled(job_id)
 
         ctx.checkpoint(status_message="Parsed; preparing to index")
 
@@ -163,9 +169,12 @@ def run_job(
                 status_message=f"Indexing elements ({done}/{total})",
             )
 
-        indexer.index_document(document, progress=_on_progress)
+        indexer.index_document(
+            document, progress=_on_progress, cancel_check=ctx.is_cancelled
+        )
 
         ctx.set_stage(JobStage.PERSISTING, status_message="Saving graph")
+        ctx.checkpoint(status_message="Saving graph")
 
         result_summary = _build_result_summary(document, ctx)
 
@@ -227,13 +236,20 @@ def _transition_to_ongoing(job_id: str) -> bool:
         return job_store.mark_ongoing(conn, job_id, _now_iso())
 
 
-def _parse(temp_path: str, filename: str, metadata_json: str) -> dict:
+def _parse(
+    temp_path: str,
+    filename: str,
+    metadata_json: str,
+    cancel_check: Optional[Callable[[], bool]] = None,
+) -> dict:
     """Parse a spooled document using CEClient."""
     metadata = Metadata.ensure_metadata(Metadata.from_json(metadata_json))
     client = CEClient(ce_config)
     with open(temp_path, "rb") as fh:
         upload = UploadFile(filename=filename, file=fh)
-        return asyncio.run(client.parse_file(file=upload, metadata=metadata))
+        return asyncio.run(
+            client.parse_file(file=upload, metadata=metadata, cancel_check=cancel_check)
+        )
 
 
 def _build_result_summary(document: DocumentModel, ctx: JobContext) -> dict:
@@ -294,9 +310,12 @@ def _finalize(
     failure_reason: Optional[FailureReason] = None,
     status_message: Optional[str] = None,
 ) -> None:
-    """Apply the terminal job transition, then run cleanup if we won it."""
+    """Finalize the job and clean up based on its actual terminal state.
+
+    Cancellation may override ``COMPLETED`` or ``FAILED``.
+    """
     with sqlite_conn(GRAPH_DB) as conn:
-        won = job_store.finalize(
+        applied_state = job_store.finalize(
             conn,
             job_id,
             terminal_state,
@@ -309,15 +328,21 @@ def _finalize(
             status_message=status_message,
         )
 
-    if not won:
+    if applied_state is None:
         logger.info(
             f"[job {job_id}] finalize lost the race; "
             f"current row already terminal"
         )
         return
 
+    if applied_state != terminal_state:
+        logger.warning(
+            f"[job {job_id}] a pending cancel overrode "
+            f"{terminal_state.value} -> {applied_state.value}"
+        )
+
     rollback_ms: Optional[int] = None
-    if terminal_state != JobState.COMPLETED:
+    if applied_state != JobState.COMPLETED:
         rollback_start = time.monotonic()
         rollback_graph(graph_id)
         rollback_ms = int((time.monotonic() - rollback_start) * 1000)
