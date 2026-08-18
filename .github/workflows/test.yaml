@@ -9,6 +9,7 @@ name: Tests
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   coverage:
@@ -41,11 +42,35 @@ jobs:
         run: poetry install --no-root --no-interaction --no-ansi --with dev
 
       - name: Run tests with coverage
+        id: tests
+        continue-on-error: true
         run: |
           poetry run pytest \
             --cov=app \
             --cov-report=xml \
-            --cov-report=term-missing
+            --cov-report=term-missing \
+            --junitxml=junit.xml
+
+      - name: Generate coverage summary
+        if: always()
+        continue-on-error: true
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: coverage.xml
+          badge: true
+          format: markdown
+          output: file
+
+      - name: Build PR comment body
+        if: always()
+        run: python3 .github/scripts/build_pr_comment.py
+
+      - name: Post sticky PR comment
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: test-and-coverage-report
+          path: pr-comment-body.md
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -53,3 +78,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           fail_ci_if_error: true
+
+      - name: Fail workflow if tests failed
+        if: steps.tests.outcome == 'failure'
+        run: exit 1
