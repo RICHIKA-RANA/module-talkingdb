@@ -10,6 +10,12 @@ imported:
   exists before anything under ``tests/`` triggers that import chain.
 * ``talkingdb.helpers.client`` reads ``CLIENT_MODE`` at import time; pin it
   to "direct" so tests never depend on a real Content-Elementizer service.
+* ``talkingdb_ce.services.reader.docx.docx_paginate`` raises ``OSError`` at
+  *import time* (imported transitively via ``app.services.jobs`` ->
+  ``talkingdb_ce.client.CEClient``) if docx pagination is enabled and
+  ``soffice`` isn't on PATH - true in CI and most dev environments that
+  don't have LibreOffice installed. Tests never exercise real docx
+  pagination, so it's disabled here unconditionally.
 * ``GRAPH_DB`` is given a throwaway default here too, as a last-resort
   safety net - every test that touches SQLite should still go through the
   ``sqlite_db``/``initialized_db`` fixtures below, but this ensures a
@@ -33,6 +39,7 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-key-for-pytest")
 os.environ.setdefault("JWT_ALGORITHM", "HS256")
 os.environ.setdefault("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60")
 os.environ.setdefault("CLIENT_MODE", "direct")
+os.environ.setdefault("CE_DOCX_PAGINATE", "0")
 os.environ.setdefault("GRAPH_DB", "/tmp/pytest-module-ttt-default-graphs.db")
 
 
