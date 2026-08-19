@@ -20,6 +20,9 @@ from talkingdb.models.document.elements.primitive.table import TableModel
 from talkingdb.models.document.indexes.index import FileIndexModel
 from talkingdb.helpers.file_graph import store as file_graph_store
 from talkingdb.helpers.job import store as job_store
+from talkingdb.models.failure import messages as failures
+from talkingdb.models.failure.failure import DocumentFailure
+from talkingdb.models.failure.reason import FailureReason
 from talkingdb.models.job.error import JobErrorCode
 from talkingdb.models.job.stage import JobStage
 from talkingdb.models.job.state import JobState
@@ -185,22 +188,24 @@ def run_job(
             status_message="Upload cancelled, cleaned up",
         )
     except JobTimeout:
+        logger.warning(
+            f"[job {job_id}] exceeded MAX_JOB_DURATION_SECONDS="
+            f"{config.MAX_JOB_DURATION_SECONDS}"
+        )
         _finalize(
             job_id,
             JobState.FAILED,
             graph_id=graph_id,
             temp_path=temp_path,
             error_code=JobErrorCode.TIMEOUT,
-            error_message=(
-                f"exceeded MAX_JOB_DURATION_SECONDS="
-                f"{config.MAX_JOB_DURATION_SECONDS}"
-            ),
+            error_message=failures.GENERIC_MESSAGE,
+            failure_reason=FailureReason.PROCESSING_FAILED,
             status_message="Upload timed out",
         )
     except BaseException as exc:
-        error_code, error_message = _classify(exc)
+        reason, error_code, detail = _classify(exc)
         logger.exception(
-            f"[job {job_id}] failed: {error_code.value}: {error_message}"
+            f"[job {job_id}] failed: {error_code.value}/{reason.value}: {detail}"
         )
         _finalize(
             job_id,
@@ -208,7 +213,8 @@ def run_job(
             graph_id=graph_id,
             temp_path=temp_path,
             error_code=error_code,
-            error_message=error_message,
+            error_message=failures.message_for(reason),
+            failure_reason=reason,
             status_message="Upload failed",
         )
     finally:
@@ -254,21 +260,24 @@ def _page_count(document: DocumentModel) -> Optional[int]:
 
 
 # ------------------------------------------------------------- classification
-def _classify(exc: BaseException) -> Tuple[JobErrorCode, str]:
-    """Map an exception to a job error code and message."""
+def _classify(
+    exc: BaseException,
+) -> Tuple[FailureReason, JobErrorCode, str]:
+    """Resolve a failure into (reason, coarse code, internal detail)."""
     name = type(exc).__name__
     detail = f"{name}: {exc}" if str(exc) else name
 
-    if isinstance(exc, ValueError):
-        return JobErrorCode.VALIDATION_ERROR, detail
+    if isinstance(exc, DocumentFailure):
+        return (
+            exc.reason,
+            failures.error_code_for(exc.reason),
+            exc.detail or detail,
+        )
+
     if isinstance(exc, sqlite3.OperationalError):
-        return JobErrorCode.PERSIST_ERROR, detail
+        return FailureReason.PROCESSING_FAILED, JobErrorCode.PERSIST_ERROR, detail
 
-    origin = repr(exc) + " " + (exc.__class__.__module__ or "")
-    if any(m in origin for m in ("docx", "talkingdb_ce", "reader")):
-        return JobErrorCode.PARSE_ERROR, detail
-
-    return JobErrorCode.INTERNAL_ERROR, detail
+    return FailureReason.PROCESSING_FAILED, JobErrorCode.INTERNAL_ERROR, detail
 
 
 # ------------------------------------------------------------------ finalize
@@ -282,6 +291,7 @@ def _finalize(
     page_count: Optional[int] = None,
     error_code: Optional[JobErrorCode] = None,
     error_message: Optional[str] = None,
+    failure_reason: Optional[FailureReason] = None,
     status_message: Optional[str] = None,
 ) -> None:
     """Apply the terminal job transition, then run cleanup if we won it."""
@@ -295,6 +305,7 @@ def _finalize(
             page_count=page_count,
             error_code=error_code,
             error_message=error_message,
+            failure_reason=failure_reason,
             status_message=status_message,
         )
 
@@ -340,6 +351,7 @@ def finalize_externally(
     temp_path: Optional[str],
     error_code: Optional[JobErrorCode] = None,
     error_message: Optional[str] = None,
+    failure_reason: Optional[FailureReason] = None,
     status_message: Optional[str] = None,
 ) -> None:
     """Public entry point the lifecycle daemon calls on orphans / timeouts.
@@ -355,5 +367,6 @@ def finalize_externally(
         temp_path=temp_path,
         error_code=error_code,
         error_message=error_message,
+        failure_reason=failure_reason,
         status_message=status_message,
     )

@@ -87,8 +87,25 @@ class JobStatusResponse(BaseModel):
     error_code: Optional[str] = Field(
         None,
         description=(
-            "VALIDATION_ERROR | PARSE_ERROR | INDEX_ERROR | PERSIST_ERROR | "
-            "TIMEOUT | STUCK | INTERNAL_ERROR. Set only on FAILED."
+            "Coarse classification. VALIDATION_ERROR | PARSE_ERROR | "
+            "INDEX_ERROR | PERSIST_ERROR | TIMEOUT | STUCK | INTERNAL_ERROR. "
+            "Set only on FAILED."
         ),
     )
-    error_message: Optional[str] = None
+    error_message: Optional[str] = Field(
+        None,
+        description=(
+            "The message to show the user. Backend-written and safe to "
+            "display as-is; never contains internal detail. Set only on FAILED."
+        ),
+    )
+    failure_reason: Optional[str] = Field(
+        None,
+        description=(
+            "Stable identifier for the failure cause, shared with upload-time "
+            "refusals. UNSUPPORTED_FILE_TYPE | FILE_TOO_LARGE | "
+            "PASSWORD_PROTECTED | PROCESSING_FAILED. Clients must tolerate "
+            "values they do not recognise and fall back to error_message. "
+            "Set only on FAILED."
+        ),
+    )

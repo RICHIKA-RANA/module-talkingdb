@@ -37,6 +37,8 @@ from talkingdb.clients.sqlite import sqlite_conn, GRAPH_DB
 from talkingdb.helpers import spool
 from talkingdb.logger.console import logger
 from talkingdb.helpers.job import store as job_store
+from talkingdb.models.failure import messages as failures
+from talkingdb.models.failure.reason import FailureReason
 from talkingdb.models.job.error import JobErrorCode
 from talkingdb.models.job.state import JobState
 
@@ -80,7 +82,8 @@ def _sweep_orphans(now: datetime) -> None:
             graph_id=job.result_graph_id,
             temp_path=job.temp_path,
             error_code=JobErrorCode.INTERNAL_ERROR,
-            error_message="orphaned job",
+            error_message=failures.GENERIC_MESSAGE,
+            failure_reason=FailureReason.PROCESSING_FAILED,
             status_message="Upload failed",
         )
 
@@ -96,7 +99,8 @@ def _sweep_stuck(now: datetime) -> None:
     for job in candidates:
         logger.warning(
             f"[daemon] stuck: {job.job_id} state={job.state.value} "
-            f"stage={job.stage.value if job.stage else None}"
+            f"stage={job.stage.value if job.stage else None} "
+            f"no progress for over {config.STUCK_THRESHOLD_SECONDS}s"
         )
 
         jobs.finalize_externally(
@@ -105,10 +109,8 @@ def _sweep_stuck(now: datetime) -> None:
             graph_id=job.result_graph_id,
             temp_path=job.temp_path,
             error_code=JobErrorCode.STUCK,
-            error_message=(
-                f"no progress recorded for over "
-                f"{config.STUCK_THRESHOLD_SECONDS}s"
-            ),
+            error_message=failures.GENERIC_MESSAGE,
+            failure_reason=FailureReason.PROCESSING_FAILED,
             status_message="Upload stalled",
         )
 
@@ -121,7 +123,9 @@ def _sweep_timeouts(now: datetime) -> None:
     for job in candidates:
         logger.warning(
             f"[daemon] timeout: {job.job_id} stage="
-            f"{job.stage.value if job.stage else None}"
+            f"{job.stage.value if job.stage else None} "
+            f"exceeded MAX_JOB_DURATION_SECONDS="
+            f"{config.MAX_JOB_DURATION_SECONDS}"
         )
 
         jobs.finalize_externally(
@@ -130,10 +134,8 @@ def _sweep_timeouts(now: datetime) -> None:
             graph_id=job.result_graph_id,
             temp_path=job.temp_path,
             error_code=JobErrorCode.TIMEOUT,
-            error_message=(
-                f"exceeded MAX_JOB_DURATION_SECONDS="
-                f"{config.MAX_JOB_DURATION_SECONDS}"
-            ),
+            error_message=failures.GENERIC_MESSAGE,
+            failure_reason=FailureReason.PROCESSING_FAILED,
             status_message="Upload timed out",
         )
 
