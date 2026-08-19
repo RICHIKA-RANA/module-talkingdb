@@ -12,15 +12,21 @@
 <p align="center">
   <img src="https://img.shields.io/github/last-commit/TalkingDB/module-ttt?style=flat-square&label=last%20commit&color=4c1" />
   <img src="https://img.shields.io/github/contributors/TalkingDB/module-ttt?style=flat-square&label=contributors&color=e05d44" />
+  <a href="https://github.com/TalkingDB/module-ttt/actions/workflows/test.yaml">
+    <img src="https://github.com/TalkingDB/module-ttt/actions/workflows/test.yaml/badge.svg" />
+  </a>
+  <a href="https://codecov.io/gh/TalkingDB/module-ttt">
+    <img src="https://codecov.io/gh/TalkingDB/module-ttt/graph/badge.svg" />
+  </a>
   <img src="https://img.shields.io/badge/language-Python-3776AB?style=flat-square&logo=python&logoColor=white" />
   <img src="https://img.shields.io/github/license/TalkingDB/module-ttt?style=flat-square&label=License&color=4c1" />
   <img src="https://img.shields.io/badge/release-v2.5.3-4c1?style=flat-square" />
-    <img src="https://img.shields.io/badge/OS-linux%2C%20windows%2C%20macOS-2496ED?style=flat-square" />
+  <img src="https://img.shields.io/badge/OS-linux%2C%20windows%2C%20macOS-2496ED?style=flat-square" />
   <img src="https://img.shields.io/badge/free%20for%20non--commercial%20use-4c1?style=flat-square" />
-
 </p>
 
 ---
+
 <h3 align="center">Vectorless, Search & Retrieval - at 1/10th token consumption</h3>
 
 TTT navigates your document structure and retrieves only the sections needed to answer your query before invoking your LLM.
@@ -33,13 +39,13 @@ Every answer is grounded in the source document, using up to 90% fewer LLM token
 
 TTT was benchmarked against OpenAI's managed File Search implementation using GPT-4o across representative enterprise document types.
 
-| **Document** | **Total Queries** | **Avg. Tokens / Query (OpenAI + Vector DB)** | **Avg. Tokens / Query (TTT)** | **Total Tokens Saved** | **Token Reduction** |
-|:-------------|------------------:|---------------------------------------------:|------------------------------:|-----------------------:|--------------------:|
-| [Microsoft FY2025 Annual Report](https://docs.google.com/document/d/1NRpcdd3_Ua5SM6UzX90w4UhAykgWw6TZ/edit?usp=sharing&ouid=115408291671450200196&rtpof=true&sd=true) | 27 | 17.38k | 850 | 446.26k | **95.11%** |
-| [Apple FY2024 Annual Report](https://drive.google.com/file/d/1QuNqBrls1JUUKxOnMqxZh77niK_YJ0b_/view?usp=sharing) | 25 | 16.44k | 1,196 | 381.17k | **92.72%** |
-| [OECD Economic Outlook](https://drive.google.com/file/d/1_edl_-zSCtnCpHXpQjc6LfA5UQiXo0ac/view?usp=drive_link) | 22 | 15.83k | 2,479 | 293.75k | **84.34%** |
-| [WHO Health Equity Report](https://drive.google.com/file/d/1gDjypJsGdSrxV5lmBcz3e7Q5GLVEyOtm/view?usp=sharing) | 19 | 15.39k | 1,140 | 270.73k | **92.60%** |
-| **Total** | **93** | **16.36k** | **1,388** | **1,392k** | **91.52%** |
+| **Document**                                                                                                                                                          | **Total Queries** | **Avg. Tokens / Query (OpenAI + Vector DB)** | **Avg. Tokens / Query (TTT)** | **Total Tokens Saved** | **Token Reduction** |
+| :-------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------: | -------------------------------------------: | ----------------------------: | ---------------------: | ------------------: |
+| [Microsoft FY2025 Annual Report](https://docs.google.com/document/d/1NRpcdd3_Ua5SM6UzX90w4UhAykgWw6TZ/edit?usp=sharing&ouid=115408291671450200196&rtpof=true&sd=true) |                27 |                                       17.38k |                           850 |                446.26k |          **95.11%** |
+| [Apple FY2024 Annual Report](https://drive.google.com/file/d/1QuNqBrls1JUUKxOnMqxZh77niK_YJ0b_/view?usp=sharing)                                                      |                25 |                                       16.44k |                         1,196 |                381.17k |          **92.72%** |
+| [OECD Economic Outlook](https://drive.google.com/file/d/1_edl_-zSCtnCpHXpQjc6LfA5UQiXo0ac/view?usp=drive_link)                                                        |                22 |                                       15.83k |                         2,479 |                293.75k |          **84.34%** |
+| [WHO Health Equity Report](https://drive.google.com/file/d/1gDjypJsGdSrxV5lmBcz3e7Q5GLVEyOtm/view?usp=sharing)                                                        |                19 |                                       15.39k |                         1,140 |                270.73k |          **92.60%** |
+| **Total**                                                                                                                                                             |            **93** |                                   **16.36k** |                     **1,388** |             **1,392k** |          **91.52%** |
 
 <p align="center">
   <img src="assets/stats-image.png" alt="Module-TTT Banner" width="100%">
@@ -111,13 +117,13 @@ Looking for more?
 
 TTT is one service inside the broader TalkingDB platform. It depends on, and works alongside, these repositories:
 
-| **Repository** | **Role** |
-|:---------------|:---------|
-| [`base-tdb-models`](https://github.com/TalkingDB/base-tdb-models) | Shared Pydantic/data models used across all TalkingDB services (jobs, documents, metadata, API responses). |
-| [`base-tdb-helpers`](https://github.com/TalkingDB/base-tdb-helpers) | Shared utility layer — storage clients, auth, graph helpers, validation. |
-| [`base-tdb-clients`](https://github.com/TalkingDB/base-tdb-clients) | Thin client wrappers for external dependencies (SQLite) used throughout the platform. |
+| **Repository**                                                                            | **Role**                                                                                                     |
+| :---------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------- |
+| [`base-tdb-models`](https://github.com/TalkingDB/base-tdb-models)                         | Shared Pydantic/data models used across all TalkingDB services (jobs, documents, metadata, API responses).   |
+| [`base-tdb-helpers`](https://github.com/TalkingDB/base-tdb-helpers)                       | Shared utility layer — storage clients, auth, graph helpers, validation.                                     |
+| [`base-tdb-clients`](https://github.com/TalkingDB/base-tdb-clients)                       | Thin client wrappers for external dependencies (SQLite) used throughout the platform.                        |
 | [`package-content-elementizer`](https://github.com/TalkingDB/package-content-elementizer) | Parses raw documents (PDF, DOCX, and more) into structured elements — the first step in building a TTT tree. |
-| [`infra-tdb-platform`](https://github.com/TalkingDB/infra-tdb-platform) | Infrastructure-as-code for the platform's cloud footprint — VMs, networking, DNS. |
+| [`infra-tdb-platform`](https://github.com/TalkingDB/infra-tdb-platform)                   | Infrastructure-as-code for the platform's cloud footprint — VMs, networking, DNS.                            |
 
 ---
 

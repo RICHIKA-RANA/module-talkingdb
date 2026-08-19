@@ -47,3 +47,9 @@ logs
 
 # Database
 graphs.db*
+
+# Coverage / CI report artifacts
+coverage.xml
+junit.xml
+code-coverage-results.md
+pr-comment-body.md

@@ -12,7 +12,7 @@ from app.core import config
 
 def _unprocessable(message: str) -> HTTPException:
     return HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail={"error_code": "VALIDATION_ERROR", "message": message},
     )
 
