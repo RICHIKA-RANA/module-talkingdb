@@ -38,9 +38,13 @@ def emit_lifecycle(job: JobModel, *, rollback_ms: Optional[int] = None) -> None:
         "file_size_bytes": job.file_size_bytes,
         "queue_wait_ms": _diff_ms(job.created_at, job.started_at),
         "processing_ms": _diff_ms(job.started_at, job.completed_at),
+        "cancel_latency_ms": _diff_ms(job.cancel_requested_at, job.completed_at),
+        "cancel_requested": job.cancel_requested,
         "rollback_ms": rollback_ms,
         "error_code": job.error_code.value if job.error_code else None,
         "filename": job.filename,
+        "progress_at": job.progress_at,
+        "heartbeat_at": job.heartbeat_at,
     }
 
     logger.info(json.dumps(record, default=str))

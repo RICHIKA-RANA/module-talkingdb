@@ -24,6 +24,7 @@ from app.services.package_symbol_generator import SymbolGenerator
 from talkingdb.clients.sqlite import sqlite_conn, GRAPH_DB
 from talkingdb.logger.console import logger
 from app.core import config
+from app.services.job_context import JobCancelled
 
 Nodes = List[Tuple[str, Dict[str, Any]]]
 Edges = List[Tuple[str, str, Dict[str, Any]]]
@@ -293,6 +294,7 @@ class IndexerService:
         self,
         document: DocumentModel,
         progress: Optional[ProgressCallback] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> GraphModel:
         """Index all document elements into the graph."""
 
@@ -308,49 +310,60 @@ class IndexerService:
 
             futures = []
 
-            for element in elements:
-
-                if isinstance(element, ParagraphModel):
-                    futures.append(
-                        executor.submit(self._process_paragraph, document, element)
-                    )
-                    continue
-
-                if not isinstance(element, TableModel):
-                    continue
-
-                futures.append(
-                    executor.submit(self._process_table, document, element)
-                )
-
-                metadata = {
-                    "heading_path": document._get_heading_path(element),
-                    "filename": document.filename,
-                    "page": element.page,
-                }
-
-                context_symbols = self._symbols(
-                    " ".join(document.get_table_context(element)),
-                    structured=True,
-                )
-
-                for row in element.normalized_rows():
-                    futures.append(
-                        executor.submit(
-                            self._process_table_row,
-                            element.id,
-                            row,
-                            metadata,
-                            context_symbols,
-                        )
-                    )
-
-            total = len(futures)
-            if progress is not None:
-                progress(0, total)
-
-            done = 0
+            # Cancellable unit: cancel queued futures on any exception before
+            # executor.shutdown(wait=True), so shutdown doesn't drain the backlog.
             try:
+                for i, element in enumerate(elements):
+
+                    if (
+                        cancel_check is not None
+                        and i % config.CHECKPOINT_BATCH == 0
+                        and cancel_check()
+                    ):
+                        raise JobCancelled(
+                            "cancelled while submitting indexing tasks"
+                        )
+
+                    if isinstance(element, ParagraphModel):
+                        futures.append(
+                            executor.submit(self._process_paragraph, document, element)
+                        )
+                        continue
+
+                    if not isinstance(element, TableModel):
+                        continue
+
+                    futures.append(
+                        executor.submit(self._process_table, document, element)
+                    )
+
+                    metadata = {
+                        "heading_path": document._get_heading_path(element),
+                        "filename": document.filename,
+                        "page": element.page,
+                    }
+
+                    context_symbols = self._symbols(
+                        " ".join(document.get_table_context(element)),
+                        structured=True,
+                    )
+
+                    for row in element.normalized_rows():
+                        futures.append(
+                            executor.submit(
+                                self._process_table_row,
+                                element.id,
+                                row,
+                                metadata,
+                                context_symbols,
+                            )
+                        )
+
+                total = len(futures)
+                done = 0
+                if progress is not None:
+                    progress(0, total)
+
                 for future in tqdm(
                     as_completed(futures),
                     total=total,

@@ -53,6 +53,11 @@ CHECKPOINT_BATCH = _int("TDB_JOB_CHECKPOINT_BATCH", 25)
 # best-effort and may lag actual work - it is never transactional.
 HEARTBEAT_MIN_GAP_SECONDS = _int("TDB_JOB_HEARTBEAT_MIN_GAP_SECONDS", 2)
 
+# How often the heartbeat refreshes cancel_requested. This bounds how stale
+# JobContext.is_cancelled() can be, and therefore the cancellation latency
+# during work without an explicit checkpoint.
+CANCEL_POLL_INTERVAL_SECONDS = _int("TDB_JOB_CANCEL_POLL_INTERVAL_SECONDS", 2)
+
 
 # -------------------------------------------------------------------- timeouts
 # A job whose heartbeat is older than this is considered orphaned (its worker
