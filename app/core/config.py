@@ -43,6 +43,19 @@ INDEXER_MAX_WORKERS = _int(
 # Suggested client retry delay.
 RETRY_AFTER_SECONDS = _int("TDB_JOB_RETRY_AFTER_SECONDS", 30)
 
+# Cap on how many times POST /v1/jobs/{id}/retry can resume the same job
+# from its parsing checkpoint, so a document that will always fail (too
+# large/complex for the configured timeout) can't be retried forever.
+MAX_JOB_RETRIES = _int("TDB_JOB_MAX_RETRIES", 2)
+
+# Where per-job PDF parsing checkpoints live, keyed by job_id. Survives a
+# failed attempt so a retry can resume from the last completed batch
+# instead of re-parsing from page 0. Cleaned up on success, on a
+# non-retryable failure, and by the daemon's retention purge.
+PARSE_CHECKPOINT_ROOT = os.getenv(
+    "TDB_PARSE_CHECKPOINT_ROOT", "/tmp/tdb-parse-checkpoints"
+)
+
 
 # ----------------------------------------------------------- checkpoint cadence
 # The indexer reports progress / checks for cancellation every Nth element.
