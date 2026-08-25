@@ -90,7 +90,7 @@ k6 run -e API_KEY="your-actual-api-key" -e GRAPH_ID="your-actual-graph-id-to-que
 To dump the telemetry report for CI/CD ingestion or performance tracking:
 
 ```bash
-k6 run -e API_KEY="your-actual-api-key" -e GRAPH_ID="your-actual-graph-id-to-query-from" --summary-export=summary.json tests/load-tests/main.js
+k6 run -e API_KEY="your-actual-api-key" -e GRAPH_ID="your-actual-graph-id-to-query-from" --summary-export=tests/load-tests/report.json tests/load-tests/main.js
 
 ```
 
