@@ -501,6 +501,7 @@ def retry_job(job_id: str) -> JobModel:
             "This failure isn't resumable - please re-upload the document"
         )
 
+    spool.assert_spool_capacity()
     acquire_slot()
     temp_path: Optional[str] = None
     retried_job: Optional[JobModel] = None

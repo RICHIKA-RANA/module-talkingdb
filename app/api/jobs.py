@@ -138,6 +138,8 @@ async def retry_job(
                 "message": "Ingestion worker pool is at capacity",
             },
         )
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

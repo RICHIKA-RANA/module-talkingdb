@@ -217,6 +217,11 @@ def _gc_orphan_temp_files(now: datetime) -> None:
         spool.discard(entry.path)
 
 
+def _reconcile_admission() -> None:
+    with sqlite_conn(GRAPH_DB) as conn:
+        job_store.reconcile_admission_slot(conn)
+
+
 def tick() -> None:
     """Run one daemon cycle."""
     now = _now_utc()
@@ -226,6 +231,7 @@ def tick() -> None:
     _sweep_timeouts(now)
     _purge_retention(now)
     _gc_orphan_temp_files(now)
+    _reconcile_admission()
 
 
 # ------------------------------------------------------------------- loop
