@@ -36,11 +36,17 @@ class JobContext:
         default_factory=threading.Event, repr=False
     )
     _hb_thread: Optional[threading.Thread] = field(default=None, repr=False)
+    _cancel_event: threading.Event = field(
+        default_factory=threading.Event, repr=False
+    )
 
     # ----------------------------------------------------------- utilities
     def elapsed_seconds(self) -> float:
         """Return elapsed runtime in seconds."""
         return time.monotonic() - self.started_monotonic
+
+    def is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
 
     # ------------------------------------------------- background heartbeat
     def start_background_heartbeat(self) -> None:
@@ -63,8 +69,28 @@ class JobContext:
             self._hb_thread = None
 
     def _heartbeat_loop(self) -> None:
-        interval = config.BACKGROUND_HEARTBEAT_INTERVAL_SECONDS
-        while not self._hb_stop.wait(interval):
+        """Poll cancellation frequently without changing heartbeat writes.
+
+        Heartbeat writes remain on ``BACKGROUND_HEARTBEAT_INTERVAL_SECONDS``.
+        This shorter ``CANCEL_POLL_INTERVAL_SECONDS`` cadence only reads
+        ``cancel_requested`` and latches ``_cancel_event``, bounding cancellation
+        latency across long-running worker stages without adding write pressure.
+        """
+        write_interval = config.BACKGROUND_HEARTBEAT_INTERVAL_SECONDS
+        poll_interval = min(config.CANCEL_POLL_INTERVAL_SECONDS, write_interval)
+        next_write = time.monotonic() + write_interval
+
+        while not self._hb_stop.wait(poll_interval):
+            try:
+                self._poll_cancel()
+            except Exception:
+                logger.exception(
+                    f"[job {self.job_id}] background cancel poll failed"
+                )
+
+            if time.monotonic() < next_write:
+                continue
+
             try:
                 self._best_effort_progress(heartbeat=True)
                 self._last_heartbeat_monotonic = time.monotonic()
@@ -72,6 +98,14 @@ class JobContext:
                 logger.exception(
                     f"[job {self.job_id}] background heartbeat tick failed"
                 )
+            next_write = time.monotonic() + write_interval
+
+    def _poll_cancel(self) -> None:
+        if self._cancel_event.is_set():
+            return
+        with sqlite_conn(GRAPH_DB) as conn:
+            if job_store.is_cancel_requested(conn, self.job_id):
+                self._cancel_event.set()
 
     def _should_write_heartbeat(self, *, force: bool) -> bool:
         """Return whether a heartbeat should be written."""
@@ -122,8 +156,12 @@ class JobContext:
         progress_details: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Run cancel, timeout, and heartbeat checks."""
+        if self._cancel_event.is_set():
+            raise JobCancelled(self.job_id)
+
         with sqlite_conn(GRAPH_DB) as conn:
             if job_store.is_cancel_requested(conn, self.job_id):
+                self._cancel_event.set()
                 raise JobCancelled(self.job_id)
 
         if self.elapsed_seconds() > config.MAX_JOB_DURATION_SECONDS:

@@ -22,9 +22,9 @@ debugpy = ">=1.8.19,<2.0.0"
 networkx = "^3.6.1"
 
 talkingdb-models = { git = "git+https://github.com/TalkingDB/base-tdb-models.git", rev = "9567ddad4bbb9a4306f733be8afde6f790a19684" }
-talkingdb-clients = { git = "git+https://github.com/TalkingDB/base-tdb-clients.git", rev = "9931c1f832d4772f5137cdc4bb193daadab2ad30" }
-talkingdb-helpers = { git = "git+https://github.com/TalkingDB/base-tdb-helpers.git", rev = "729a7b052b721c14801071faa7e3324bf4a0bd49" }
-package-content-elementizer = { git = "git+https://github.com/TalkingDB/package-content-elementizer.git", rev = "f77a58d8cc7ae376924fd0f672eb028f2e8808ef" }
+talkingdb-clients = { git = "git+https://github.com/TalkingDB/base-tdb-clients.git", rev = "29abea220d96efac7b3ecee9deb9f5af49636174" }
+talkingdb-helpers = { git = "git+https://github.com/TalkingDB/base-tdb-helpers.git", rev = "c3cb48a595cbd431d6eb76b47ff8e09eb3cab187" }
+package-content-elementizer = { git = "git+https://github.com/TalkingDB/package-content-elementizer.git", rev = "f716a75d511db4d60bed10e567c9ab9f847a1aee" }
 uvloop = "^0.22.1"
 httptools = "^0.7.1"
 spacy = "^3.8.11"
