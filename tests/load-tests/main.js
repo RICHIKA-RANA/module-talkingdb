@@ -8,7 +8,7 @@ export const options = {
         baseline_query: {
             executor: 'constant-vus',
             exec: 'documentQueryScenario',
-            vus: 5,                     // Reduced to 2 VUs to verify SLA at true idle load
+            vus: 5,
             duration: '2m',
             startTime: '0s',
         },
@@ -16,7 +16,7 @@ export const options = {
         document_upload: {
             executor: 'constant-vus',
             exec: 'documentUploadScenario',
-            vus: 5,                     // 1 VU to test single-file ingestion overhead
+            vus: 5,
             duration: '2m',
             startTime: '2m15s',          // Starts AFTER baseline finishes
         },
