@@ -185,6 +185,7 @@ async def submit_document_job(
         )
         job.file_size_bytes = size_bytes
         job.temp_path = temp_path
+        job.metadata_json = metadata_json
 
         channel = get_release_channel(request)
         file_hash = await run_in_threadpool(file_store.compute_sha256, temp_path)

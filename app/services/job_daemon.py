@@ -34,12 +34,14 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from talkingdb.clients.sqlite import sqlite_conn, GRAPH_DB
-from talkingdb.helpers import spool
+from talkingdb.helpers import file_store, spool
+from talkingdb.helpers.file_graph import store as file_graph_store
 from talkingdb.logger.console import logger
 from talkingdb.helpers.job import store as job_store
 from talkingdb.models.failure import messages as failures
 from talkingdb.models.failure.reason import FailureReason
 from talkingdb.models.job.error import JobErrorCode
+from talkingdb.models.job.stage import JobStage
 from talkingdb.models.job.state import JobState
 
 from app.core import config
@@ -85,6 +87,7 @@ def _sweep_orphans(now: datetime) -> None:
             error_message=failures.GENERIC_MESSAGE,
             failure_reason=FailureReason.PROCESSING_FAILED,
             status_message="Upload failed",
+            retryable=job.stage == JobStage.PARSING,
         )
 
 
@@ -112,6 +115,7 @@ def _sweep_stuck(now: datetime) -> None:
             error_message=failures.GENERIC_MESSAGE,
             failure_reason=FailureReason.PROCESSING_FAILED,
             status_message="Upload stalled",
+            retryable=False,
         )
 
 
@@ -137,6 +141,7 @@ def _sweep_timeouts(now: datetime) -> None:
             error_message=failures.GENERIC_MESSAGE,
             failure_reason=FailureReason.PROCESSING_FAILED,
             status_message="Upload timed out",
+            retryable=False,
         )
 
 
@@ -163,10 +168,23 @@ def _purge_retention(now: datetime) -> None:
         )
 
     for job in expired:
+        with sqlite_conn(GRAPH_DB) as conn:
+            deleted = job_store.delete_if_terminal(conn, job.job_id)
+        if not deleted:
+            continue
+
         spool.discard(job.temp_path)
+        jobs.discard_parse_checkpoint(jobs.parse_checkpoint_dir(job.job_id))
 
         with sqlite_conn(GRAPH_DB) as conn:
-            job_store.delete(conn, job.job_id)
+            mapping = file_graph_store.get_by_job_id(conn, job.job_id)
+            if mapping is not None:
+                file_graph_store.delete_by_job_id(conn, job.job_id)
+                remaining = file_graph_store.get_by_channel_hash(
+                    conn, mapping.channel, mapping.file_hash
+                )
+                if not remaining:
+                    file_store.delete_file(mapping.channel, mapping.file_hash)
 
 
 def _gc_orphan_temp_files(now: datetime) -> None:
@@ -199,6 +217,11 @@ def _gc_orphan_temp_files(now: datetime) -> None:
         spool.discard(entry.path)
 
 
+def _reconcile_admission() -> None:
+    with sqlite_conn(GRAPH_DB) as conn:
+        job_store.reconcile_admission_slot(conn)
+
+
 def tick() -> None:
     """Run one daemon cycle."""
     now = _now_utc()
@@ -208,6 +231,7 @@ def tick() -> None:
     _sweep_timeouts(now)
     _purge_retention(now)
     _gc_orphan_temp_files(now)
+    _reconcile_admission()
 
 
 # ------------------------------------------------------------------- loop

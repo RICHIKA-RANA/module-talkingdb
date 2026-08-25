@@ -1,8 +1,10 @@
 """Async document-ingestion runtime."""
 
 import asyncio
+import os
+import shutil
 import sqlite3
-import threading
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -24,9 +26,10 @@ from talkingdb.models.failure import messages as failures
 from talkingdb.models.failure.failure import DocumentFailure
 from talkingdb.models.failure.reason import FailureReason
 from talkingdb.models.job.error import JobErrorCode
+from talkingdb.models.job.job import JobModel
 from talkingdb.models.job.stage import JobStage
 from talkingdb.models.job.state import JobState
-from talkingdb.models.metadata.metadata import Metadata
+from talkingdb.models.metadata.metadata import DEFAULT_METADATA, Metadata
 from talkingdb_ce.client import CEClient
 from talkingdb_ce.services.reader.killable_subprocess import ReadCancelled
 from talkingdb.helpers import file_store
@@ -41,12 +44,25 @@ class QueueFull(Exception):
     """Raised when the bounded admission queue is full."""
 
 
+class JobNotFound(Exception):
+    """Raised by :func:`retry_job` when the job id doesn't exist."""
+
+
+class JobNotRetryable(Exception):
+    """Raised by :func:`retry_job` when the job can't be retried right now.
+
+    Carries a human-readable ``reason`` for the API layer to surface.
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
 _executor = ThreadPoolExecutor(
     max_workers=config.MAX_WORKERS,
     thread_name_prefix="tdb-job",
 )
-_admission_lock = threading.Lock()
-_in_flight = 0
 
 
 def _now_iso() -> str:
@@ -55,23 +71,15 @@ def _now_iso() -> str:
 
 def acquire_slot() -> None:
     """Reserve one bounded admission slot."""
-    global _in_flight
-    with _admission_lock:
-        if _in_flight >= config.QUEUE_CAPACITY:
+    with sqlite_conn(GRAPH_DB) as conn:
+        if not job_store.acquire_admission_slot(conn, config.QUEUE_CAPACITY):
             raise QueueFull()
-        _in_flight += 1
 
 
 def release_slot() -> None:
-    """Release a slot previously held by :func:`acquire_slot`.
-
-    Idempotently safe to call on the same code path that raised after
-    acquisition - we floor at zero.
-    """
-    global _in_flight
-    with _admission_lock:
-        if _in_flight > 0:
-            _in_flight -= 1
+    """Release a slot previously held by :func:`acquire_slot`.`"""
+    with sqlite_conn(GRAPH_DB) as conn:
+        job_store.release_admission_slot(conn)
 
 
 def enqueue_reserved(
@@ -101,6 +109,19 @@ def _run_after_reservation(
         release_slot()
 
 
+# -------------------------------------------------------- parse checkpoints
+def parse_checkpoint_dir(job_id: str) -> str:
+    """Deterministic per-job checkpoint dir for resumable PDF parsing."""
+    return os.path.join(config.PARSE_CHECKPOINT_ROOT, job_id)
+
+
+def discard_parse_checkpoint(checkpoint_dir: str) -> None:
+    try:
+        shutil.rmtree(checkpoint_dir, ignore_errors=True)
+    except OSError:
+        logger.warning(f"failed to remove parse checkpoint dir: {checkpoint_dir}")
+
+
 # ---------------------------------------------------------------------- run
 def run_job(
     job_id: str, temp_path: str, filename: str, metadata_json: str
@@ -114,15 +135,28 @@ def run_job(
     ctx.start_background_heartbeat()
     graph_id: Optional[str] = None
     result_summary = None
+    checkpoint_dir = parse_checkpoint_dir(job_id)
+    parse_failed_retryably = False
 
     try:
         ctx.set_stage(JobStage.PARSING, status_message="Parsing document")
         try:
-            parse_result = _parse(
-                temp_path, filename, metadata_json, cancel_check=ctx.is_cancelled
-            )
-        except ReadCancelled:
-            raise JobCancelled(job_id)
+            try:
+                parse_result = _parse(
+                    temp_path, filename, metadata_json,
+                    cancel_check=ctx.is_cancelled,
+                    checkpoint_dir=checkpoint_dir,
+                )
+            except ReadCancelled:
+                raise JobCancelled(job_id)
+            except DocumentFailure:
+                raise
+            except BaseException:
+                parse_failed_retryably = True
+                raise
+        finally:
+            if not parse_failed_retryably:
+                discard_parse_checkpoint(checkpoint_dir)
 
         ctx.checkpoint(status_message="Parsed; preparing to index")
 
@@ -210,6 +244,7 @@ def run_job(
             error_message=failures.GENERIC_MESSAGE,
             failure_reason=FailureReason.PROCESSING_FAILED,
             status_message="Upload timed out",
+            retryable=parse_failed_retryably,
         )
     except BaseException as exc:
         reason, error_code, detail = _classify(exc)
@@ -225,6 +260,7 @@ def run_job(
             error_message=failures.message_for(reason),
             failure_reason=reason,
             status_message="Upload failed",
+            retryable=parse_failed_retryably,
         )
     finally:
         ctx.stop_background_heartbeat()
@@ -241,6 +277,7 @@ def _parse(
     filename: str,
     metadata_json: str,
     cancel_check: Optional[Callable[[], bool]] = None,
+    checkpoint_dir: Optional[str] = None,
 ) -> dict:
     """Parse a spooled document using CEClient."""
     metadata = Metadata.ensure_metadata(Metadata.from_json(metadata_json))
@@ -248,7 +285,10 @@ def _parse(
     with open(temp_path, "rb") as fh:
         upload = UploadFile(filename=filename, file=fh)
         return asyncio.run(
-            client.parse_file(file=upload, metadata=metadata, cancel_check=cancel_check)
+            client.parse_file(
+                file=upload, metadata=metadata, cancel_check=cancel_check,
+                checkpoint_dir=checkpoint_dir,
+            )
         )
 
 
@@ -309,10 +349,18 @@ def _finalize(
     error_message: Optional[str] = None,
     failure_reason: Optional[FailureReason] = None,
     status_message: Optional[str] = None,
+    retryable: bool = False,
 ) -> None:
     """Finalize the job and clean up based on its actual terminal state.
 
     Cancellation may override ``COMPLETED`` or ``FAILED``.
+
+    ``retryable=True`` means the FAILED job can be resumed via
+    ``POST /v1/jobs/{id}/retry`` from its parsing checkpoint, so the uploaded
+    blob, dedup mapping row, and parse checkpoint are preserved instead of rolled
+    back. If cancellation wins the race (``applied_state`` is ``CANCELLED``),
+    rollback always applies. The local ``temp_path`` is discarded in either case;
+    retry re-fetches the original bytes from the preserved blob.
     """
     with sqlite_conn(GRAPH_DB) as conn:
         applied_state = job_store.finalize(
@@ -341,24 +389,27 @@ def _finalize(
             f"{terminal_state.value} -> {applied_state.value}"
         )
 
+    preserve_for_retry = retryable and applied_state == JobState.FAILED
+
     rollback_ms: Optional[int] = None
     if applied_state != JobState.COMPLETED:
         rollback_start = time.monotonic()
         rollback_graph(graph_id)
         rollback_ms = int((time.monotonic() - rollback_start) * 1000)
 
-        mapping = None
-        remaining = []
-        with sqlite_conn(GRAPH_DB) as conn:
-            mapping = file_graph_store.get_by_job_id(conn, job_id)
-            if mapping is not None:
-                file_graph_store.delete_by_job_id(conn, job_id)
-                remaining = file_graph_store.get_by_channel_hash(
-                    conn, mapping.channel, mapping.file_hash
-                )
+        if not preserve_for_retry:
+            mapping = None
+            remaining = []
+            with sqlite_conn(GRAPH_DB) as conn:
+                mapping = file_graph_store.get_by_job_id(conn, job_id)
+                if mapping is not None:
+                    file_graph_store.delete_by_job_id(conn, job_id)
+                    remaining = file_graph_store.get_by_channel_hash(
+                        conn, mapping.channel, mapping.file_hash
+                    )
 
-        if mapping is not None and not remaining:
-            file_store.delete_file(mapping.channel, mapping.file_hash)
+            if mapping is not None and not remaining:
+                file_store.delete_file(mapping.channel, mapping.file_hash)
 
     spool.discard(temp_path)
 
@@ -378,6 +429,7 @@ def finalize_externally(
     error_message: Optional[str] = None,
     failure_reason: Optional[FailureReason] = None,
     status_message: Optional[str] = None,
+    retryable: bool = False,
 ) -> None:
     """Public entry point the lifecycle daemon calls on orphans / timeouts.
 
@@ -394,4 +446,97 @@ def finalize_externally(
         error_message=error_message,
         failure_reason=failure_reason,
         status_message=status_message,
+        retryable=retryable,
     )
+
+
+# --------------------------------------------------------------------- retry
+def _respool_from_minio(
+    channel: str, file_hash: str, filename: Optional[str]
+) -> Tuple[str, int]:
+    """Re-download a previously-uploaded blob to a fresh local temp file."""
+    stream = file_store.get_file_stream(channel, file_hash)
+    if stream is None:
+        raise FileNotFoundError(f"blob missing for retry: {channel}/{file_hash}")
+
+    try:
+        os.makedirs(spool.SPOOL_DIR, exist_ok=True)
+        _, ext = os.path.splitext(filename or "")
+        tmp = tempfile.NamedTemporaryFile(
+            prefix="tdb-upload-", suffix=(ext or ".bin"),
+            dir=spool.SPOOL_DIR, delete=False,
+        )
+        size = 0
+        try:
+            for chunk in stream.stream(1024 * 1024):
+                tmp.write(chunk)
+                size += len(chunk)
+            tmp.flush()
+            return tmp.name, size
+        except BaseException:
+            tmp.close()
+            spool.discard(tmp.name)
+            raise
+        finally:
+            if not tmp.closed:
+                tmp.close()
+    finally:
+        stream.close()
+        stream.release_conn()
+
+
+def retry_job(job_id: str) -> JobModel:
+    """Retry a FAILED job from its last parsing checkpoint."""
+    with sqlite_conn(GRAPH_DB) as conn:
+        job = job_store.get(conn, job_id)
+    if job is None:
+        raise JobNotFound(job_id)
+    if job.state != JobState.FAILED:
+        raise JobNotRetryable("Only a failed job can be retried")
+
+    with sqlite_conn(GRAPH_DB) as conn:
+        mapping = file_graph_store.get_by_job_id(conn, job_id)
+    if mapping is None:
+        raise JobNotRetryable(
+            "This failure isn't resumable - please re-upload the document"
+        )
+
+    spool.assert_spool_capacity()
+    acquire_slot()
+    temp_path: Optional[str] = None
+    retried_job: Optional[JobModel] = None
+    enqueued = False
+    try:
+        try:
+            temp_path, _size = _respool_from_minio(
+                mapping.channel, mapping.file_hash, job.filename
+            )
+        except FileNotFoundError:
+            raise JobNotRetryable(
+                "The uploaded file is no longer available - please re-upload"
+            )
+
+        with sqlite_conn(GRAPH_DB) as conn:
+            retried_job = job_store.reset_for_retry(
+                conn, job_id,
+                temp_path=temp_path, max_retries=config.MAX_JOB_RETRIES,
+            )
+        if retried_job is None:
+            raise JobNotRetryable(
+                f"This job has already been retried the maximum "
+                f"{config.MAX_JOB_RETRIES} time(s), or is no longer failed"
+            )
+
+        enqueue_reserved(
+            job_id=job_id,
+            temp_path=temp_path,
+            filename=job.filename or "document",
+            metadata_json=retried_job.metadata_json or DEFAULT_METADATA,
+        )
+        enqueued = True
+    finally:
+        if not enqueued:
+            spool.discard(temp_path)
+            release_slot()
+
+    return retried_job
