@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.api import root, index, documents, jobs, queries, namespaces, projects, public, tree, auth
+from app.api import root, index, documents, jobs, queries, namespaces, projects, public, tree, auth, health
 from app.core.upload_limit import UploadSizeLimitMiddleware
 from app.core import llm
 from app.services import job_daemon
@@ -45,6 +45,7 @@ app.add_middleware(
 )
 
 app.include_router(root.router)
+app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(namespaces.router)
