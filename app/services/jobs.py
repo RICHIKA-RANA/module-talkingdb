@@ -274,6 +274,52 @@ def _transition_to_ongoing(job_id: str) -> bool:
     with sqlite_conn(GRAPH_DB) as conn:
         return job_store.mark_ongoing(conn, job_id, _now_iso())
 
+def _is_docx(filename: Optional[str]) -> bool:
+    return os.path.splitext(filename or "")[1].lower() == ".docx"
+
+
+def _upload_docx_after_parse(
+    *,
+    job_id: str,
+    channel: str,
+    file_hash: str,
+    temp_path: str,
+    baked_path: Optional[str],
+    bake_page_breaks: bool,
+    stored_file_hash: Optional[str] = None,
+) -> None:
+    """Store the docx blob once after parse — baked on first ingest, skip on retry."""
+    if not file_store.is_configured():
+        return
+
+    if stored_file_hash:
+        with sqlite_conn(GRAPH_DB) as conn:
+            file_graph_store.update_file_hash(conn, job_id, stored_file_hash)
+        return
+
+    if not bake_page_breaks:
+        if file_store.stat_file(channel, file_hash) is None:
+            raise FileNotFoundError(
+                f"docx blob missing for retry: job_id={job_id}"
+            )
+        return
+
+    if (
+        baked_path
+        and os.path.exists(baked_path)
+        and os.path.getsize(baked_path) > 0
+    ):
+        upload_path = baked_path
+    else:
+        upload_path = temp_path
+
+    final_hash = file_store.compute_sha256(upload_path)
+    file_store.upload_file(channel, final_hash, upload_path)
+
+    with sqlite_conn(GRAPH_DB) as conn:
+        file_graph_store.update_file_hash(conn, job_id, final_hash)
+
+
 def _parse(
     job_id: str,
     temp_path: str,
@@ -284,23 +330,58 @@ def _parse(
 ) -> dict:
     """Parse a spooled document using CEClient."""
     metadata = Metadata.ensure_metadata(Metadata.from_json(metadata_json))
+
+    baked_path: Optional[str] = None
+    is_docx = _is_docx(filename)
+    bake_page_breaks = True
+
     with sqlite_conn(GRAPH_DB) as conn:
         mapping = file_graph_store.get_by_job_id(conn, job_id)
+
     if mapping is not None:
-        metadata = metadata.extend_metadata(
-            {"channel": mapping.channel, "file_hash": mapping.file_hash},
-            overwrite=True,
-        )
+        meta_fields = metadata.model_dump()
+        if meta_fields.get("bake_page_breaks") is False:
+            bake_page_breaks = False
+
+        extra: dict = {"channel": mapping.channel}
+        if is_docx and bake_page_breaks:
+            fd, baked_path = tempfile.mkstemp(
+                prefix="tdb-baked-",
+                suffix=".docx",
+                dir=spool.SPOOL_DIR,
+            )
+            os.close(fd)
+            extra["baked_docx_output_path"] = baked_path
+            extra["bake_page_breaks"] = True
+        elif is_docx:
+            extra["bake_page_breaks"] = False
+
+        metadata = metadata.extend_metadata(extra, overwrite=True)
 
     client = CEClient(ce_config)
-    with open(temp_path, "rb") as fh:
-        upload = UploadFile(filename=filename, file=fh)
-        return asyncio.run(
-            client.parse_file(
-                file=upload, metadata=metadata, cancel_check=cancel_check,
-                checkpoint_dir=checkpoint_dir,
+    try:
+        with open(temp_path, "rb") as fh:
+            upload = UploadFile(filename=filename, file=fh)
+            result = asyncio.run(
+                client.parse_file(
+                    file=upload, metadata=metadata, cancel_check=cancel_check,
+                    checkpoint_dir=checkpoint_dir,
+                )
             )
-        )
+        if is_docx and mapping is not None:
+            _upload_docx_after_parse(
+                job_id=job_id,
+                channel=mapping.channel,
+                file_hash=mapping.file_hash,
+                temp_path=temp_path,
+                baked_path=baked_path,
+                bake_page_breaks=bake_page_breaks,
+                stored_file_hash=result.get("stored_file_hash"),
+            )
+        return result
+    finally:
+        if baked_path:
+            spool.discard(baked_path)
 
 def _build_result_summary(document: DocumentModel, ctx: JobContext) -> dict:
     elements_total = 0
@@ -541,7 +622,9 @@ def retry_job(job_id: str) -> JobModel:
             job_id=job_id,
             temp_path=temp_path,
             filename=job.filename or "document",
-            metadata_json=retried_job.metadata_json or DEFAULT_METADATA,
+            metadata_json=Metadata.ensure_metadata(
+                Metadata.from_json(retried_job.metadata_json or DEFAULT_METADATA)
+            ).extend_metadata({"bake_page_breaks": False}, overwrite=True).to_str(),
         )
         enqueued = True
     finally:
