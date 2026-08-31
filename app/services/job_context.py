@@ -39,6 +39,9 @@ class JobContext:
     _cancel_event: threading.Event = field(
         default_factory=threading.Event, repr=False
     )
+    _timeout_event: threading.Event = field(
+        default_factory=threading.Event, repr=False
+    )
 
     # ----------------------------------------------------------- utilities
     def elapsed_seconds(self) -> float:
@@ -47,6 +50,14 @@ class JobContext:
 
     def is_cancelled(self) -> bool:
         return self._cancel_event.is_set()
+
+    def is_timed_out(self) -> bool:
+        return self._timeout_event.is_set()
+
+    def cancel_or_timeout_requested(self) -> bool:
+        """Combines user-cancel and job-timeout checks to ensure killable
+        subprocesses are terminated when a job exceeds its duration limit."""
+        return self._cancel_event.is_set() or self._timeout_event.is_set()
 
     # ------------------------------------------------- background heartbeat
     def start_background_heartbeat(self) -> None:
@@ -88,6 +99,8 @@ class JobContext:
                     f"[job {self.job_id}] background cancel poll failed"
                 )
 
+            self._poll_timeout()
+
             if time.monotonic() < next_write:
                 continue
 
@@ -106,6 +119,14 @@ class JobContext:
         with sqlite_conn(GRAPH_DB) as conn:
             if job_store.is_cancel_requested(conn, self.job_id):
                 self._cancel_event.set()
+
+    def _poll_timeout(self) -> None:
+        """Trigger `cancel_check` when the job duration limit is reached,
+        preventing timed-out subprocesses from continuing to run after the job is marked `FAILED`."""
+        if self._timeout_event.is_set():
+            return
+        if self.elapsed_seconds() > config.MAX_JOB_DURATION_SECONDS:
+            self._timeout_event.set()
 
     def _should_write_heartbeat(self, *, force: bool) -> bool:
         """Return whether a heartbeat should be written."""
@@ -164,7 +185,10 @@ class JobContext:
                 self._cancel_event.set()
                 raise JobCancelled(self.job_id)
 
-        if self.elapsed_seconds() > config.MAX_JOB_DURATION_SECONDS:
+        if self._timeout_event.is_set() or (
+            self.elapsed_seconds() > config.MAX_JOB_DURATION_SECONDS
+        ):
+            self._timeout_event.set()
             raise JobTimeout(self.job_id)
 
         if not self._should_write_heartbeat(force=False):
