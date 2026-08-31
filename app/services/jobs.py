@@ -144,10 +144,13 @@ def run_job(
             try:
                 parse_result = _parse(
                     temp_path, filename, metadata_json,
-                    cancel_check=ctx.is_cancelled,
+                    cancel_check=ctx.cancel_or_timeout_requested,
                     checkpoint_dir=checkpoint_dir,
                 )
             except ReadCancelled:
+                if ctx.is_timed_out():
+                    parse_failed_retryably = True
+                    raise JobTimeout(job_id)
                 raise JobCancelled(job_id)
             except DocumentFailure:
                 raise
