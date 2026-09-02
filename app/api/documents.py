@@ -205,12 +205,9 @@ async def submit_document_job(
             )
 
         try:
-            # DOCX blobs are stored once after parse (page breaks baked in).
-            # PDF and other types are uploaded immediately.
-            if ext != "docx":
-                await run_in_threadpool(
-                    file_store.upload_file, channel, file_hash, temp_path
-                )
+            await run_in_threadpool(
+                file_store.upload_file, channel, file_hash, temp_path
+            )
         except Exception:
             # Upload genuinely failed (not a dedup race) - roll back the
             # job/mapping rows we just created so nothing points at a file
