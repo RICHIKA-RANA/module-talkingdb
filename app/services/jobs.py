@@ -548,9 +548,7 @@ def retry_job(job_id: str) -> JobModel:
             job_id=job_id,
             temp_path=temp_path,
             filename=job.filename or "document",
-            metadata_json=Metadata.ensure_metadata(
-                Metadata.from_json(retried_job.metadata_json or DEFAULT_METADATA)
-            ),
+            metadata_json=retried_job.metadata_json or DEFAULT_METADATA,
         )
         enqueued = True
     finally:
