@@ -205,8 +205,9 @@ async def submit_document_job(
             )
 
         try:
-            # upload_file() does a blocking network call to MinIO.
-            await run_in_threadpool(file_store.upload_file, channel, file_hash, temp_path)
+            await run_in_threadpool(
+                file_store.upload_file, channel, file_hash, temp_path
+            )
         except Exception:
             # Upload genuinely failed (not a dedup race) - roll back the
             # job/mapping rows we just created so nothing points at a file

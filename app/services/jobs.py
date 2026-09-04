@@ -143,7 +143,7 @@ def run_job(
         try:
             try:
                 parse_result = _parse(
-                    temp_path, filename, metadata_json,
+                    job_id, temp_path, filename, metadata_json,
                     cancel_check=ctx.cancel_or_timeout_requested,
                     checkpoint_dir=checkpoint_dir,
                 )
@@ -274,8 +274,8 @@ def _transition_to_ongoing(job_id: str) -> bool:
     with sqlite_conn(GRAPH_DB) as conn:
         return job_store.mark_ongoing(conn, job_id, _now_iso())
 
-
 def _parse(
+    job_id: str,
     temp_path: str,
     filename: str,
     metadata_json: str,
@@ -284,6 +284,21 @@ def _parse(
 ) -> dict:
     """Parse a spooled document using CEClient."""
     metadata = Metadata.ensure_metadata(Metadata.from_json(metadata_json))
+
+    # Only docx goes through the page-break-baking overwrite step, so only
+    # docx jobs get channel/file_hash attached. Scoping this by extension -
+    # rather than doing it unconditionally for every job - is what keeps a
+    # pdf upload's own channel value (if a caller supplied one) intact.
+    _, ext = os.path.splitext(filename or "")
+    if ext.lower() == ".docx":
+        with sqlite_conn(GRAPH_DB) as conn:
+            mapping = file_graph_store.get_by_job_id(conn, job_id)
+        if mapping is not None:
+            metadata = metadata.extend_metadata(
+                {"channel": mapping.channel, "file_hash": mapping.file_hash},
+                overwrite=True,
+            )
+
     client = CEClient(ce_config)
     with open(temp_path, "rb") as fh:
         upload = UploadFile(filename=filename, file=fh)
@@ -293,7 +308,6 @@ def _parse(
                 checkpoint_dir=checkpoint_dir,
             )
         )
-
 
 def _build_result_summary(document: DocumentModel, ctx: JobContext) -> dict:
     elements_total = 0
